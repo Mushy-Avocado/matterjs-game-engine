@@ -894,3 +894,5 @@ var Game = (function() {
     return Game;
     
 })();
+
+export { Game };
