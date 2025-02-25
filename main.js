@@ -931,4 +931,4 @@ var Game = (function() {
 
 })();
 
-export Game;
+export default Game;
