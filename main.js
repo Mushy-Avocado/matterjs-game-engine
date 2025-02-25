@@ -344,14 +344,35 @@ var Game = (function() {
             this.ctx.drawImage(img, x, y, w, h);
         }
     }
+    
+    class EventSystem {
+        listeners = {};
+
+        on(event, callback) {
+            if (!this.listeners[event]) {
+                this.listeners[event] = [callback];
+                return;
+            }
+            this.listeners[event].push(callback);
+        }
+
+        trigger(event) {
+            if (!this.listeners[event]) {
+                return;   
+            }
+            this.listeners[event].forEach(callback => callback.apply(null, Array.prototype.slice.call(arguments, -1)));
+        }
+    }
 
     // A class to inherit from that adds methods for controlling matter bodies. By default collides with nothing
-    class MatterSprite {
+    class MatterSprite extends EventSystem {
 
         isDead = false;
         isGravity = true;
 
         constructor(matterBody) {
+            super();
+            matterBody.sprite = this;
             this.body = matterBody;
             this.body.collisionFilter.group = -1;
             this.body.collisionFilter.mask = 0;
@@ -495,23 +516,12 @@ var Game = (function() {
     }
 
     // A collection of matter sprites
-    class Group {
+    class Group extends EventSystem {
         items = [];
-        listeners = {
-            add: [],
-            remove: [],
-        };
-
+        
         constructor(items = []) {
+            super();
             items.forEach(this.add.bind(this));
-        }
-
-        on(event, callback) {
-            this.listeners[event].push(callback);
-        }
-
-        trigger(event) {
-            this.listeners[event].forEach(callback => callback.apply(null, Array.prototype.slice.call(arguments, -1)));
         }
 
         add(item) {
@@ -531,12 +541,106 @@ var Game = (function() {
             this.items.forEach(callback);
         }
     }
+    
+    // Controls callbacks for when objects collide
+    class CollisionListenManager {
+        
+        listenPairs = new Map();
+        
+        constructor(physics) {
+            Matter.Events.on(physics.engine, "collisionActive", pairsList => {
+                pairsList.pairs.forEach(pair => {
+                    this.processCollision(pair.collision);
+                });
+            });
+        }
+        
+        internalAddSingle(a, b, callback) {
+            if (!this.listenPairs.has(a)) {
+                this.listenPairs.set(a, new Map());
+            }
+            this.listenPairs.get(a).set(b, callback);
+        }
+        
+        // Listens for 2 objects colliding and invokes the callback
+        add(a, b, callback) {
+            if (a instanceof Group) {
+                if (b instanceof Group) {
+                    // Both are groups
+                    a.each(a => {
+                        b.each(b => {
+                            this.internalAddSingle(a, b, callback);
+                        });
+                    });
+                    a.on("add", item => {
+                        b.each(b => {
+                            this.internalAddSingle(item, b, callback);
+                        });
+                    });
+                    b.on("add", item => {
+                        b.each(b => {
+                            this.internalAddSingle(item, b, callback);
+                        });
+                    });
+                } else {
+                    // a is a group, b is a sprite
+                    a.each(a => {
+                        this.internalAddSingle(a, b, callback);
+                    });
+                    a.on("add", item => {
+                        this.internalAddSingle(item, b, callback);
+                    });
+                }
+            } else {
+                if (b instanceof Group) {
+                    // a is a sprite, b is a group
+                    b.each(b => {
+                        this.internalAddSingle(a, b, callback);
+                    });
+                    b.on("add", item => {
+                        this.internalAddSingle(a, item, callback);
+                    });
+                } else {
+                    // Both are sprites
+                    this.internalAddSingle(a, b, callback);
+                }
+            }
+        }
+        
+        getCollisionCallback(a, b) {
+            return this.listenPairs.has(a) && this.listenPairs.get(a).has(b)
+                ? this.listenPairs.get(a).get(b)
+                : null;
+        }
+        
+        hasPair(a, b) {
+            return this.listenPairs.has(a) && this.listenPairs.get(a).has(b);
+        }
+        
+        processCollision(collision) {
+            let a = collision.bodyA.sprite;
+            let b = collision.bodyB.sprite;
+            let callback = this.getCollisionCallback(a, b);
+            if (callback) {
+                callback(a, b, collision);
+            }
+            callback = this.getCollisionCallback(b, a);
+            if (callback) {
+                callback(b, a, Matter.Collision.create(b.body, a.body));
+            }
+        }
+        
+    }
 
     // Controls what collides with what
     class CollisionManager {
 
         currentCategory = 1;
         callbacks = new Map();
+
+        constructor(physics) {
+            this.listener = new CollisionListenManager(physics);
+        }
 
         internalAddSingle(a, b, callback) {
 
@@ -559,16 +663,6 @@ var Game = (function() {
             // Set group to 0 so category & mask take effect
             bodyA.collisionFilter.group = 0;
             bodyB.collisionFilter.group = 0;
-        }
-
-        internalListenSingle(a, b, callback) {
-            if (!this.callbacks.has(a)) {
-                this.callbacks.set(a, new Set());
-            }
-            this.callbacks.get(a).add({
-                b,
-                callback,
-            });
         }
 
         // Makes it so both objects collide with each other
@@ -615,69 +709,6 @@ var Game = (function() {
                 }
             }
         }
-
-        // Invokes the callback when both objects collide
-        on(a, b, callback) {
-            if (a instanceof Group) {
-                if (b instanceof Group) {
-                    // Both are groups
-                    a.each(a => {
-                        b.each(b => {
-                            this.internalListenSingle(a, b, callback);
-                        });
-                    });
-                    a.on("add", item => {
-                        b.each(b => {
-                            this.internalListenSingle(item, b, callback);
-                        });
-                    });
-                    b.on("add", item => {
-                        b.each(b => {
-                            this.internalListenSingle(item, b, callback);
-                        });
-                    });
-                } else {
-                    // a is a group, b is a sprite
-                    a.each(a => {
-                        this.internalListenSingle(a, b, callback);
-                    });
-                    a.on("add", item => {
-                        this.internalListenSingle(item, b, callback);
-                    });
-                }
-            } else {
-                if (b instanceof Group) {
-                    // a is a sprite, b is a group
-                    b.each(b => {
-                        this.internalListenSingle(a, b, callback);
-                    });
-                    b.on("add", item => {
-                        this.internalListenSingle(a, item, callback);
-                    });
-                } else {
-                    // Both are sprites
-                    this.internalListenSingle(a, b, callback);
-                }
-            }
-
-        }
-
-        update() {
-            this.callbacks.forEach((bs, a) => {
-                if (a.isDead) {
-                    return void this.callbacks.delete(a);
-                }
-                bs.forEach(listener => {
-                    if (listener.b.isDead) {
-                        this.callbacks.get(a).delete(listener);
-                    }
-                    const collision = MatterSprite.collides(a, listener.b);
-                    if (collision) {
-                        listener.callback(a, listener.b, collision);
-                    }
-                });
-            });
-        }
     }
 
     // Creates new bodies and manages gravity 
@@ -688,10 +719,9 @@ var Game = (function() {
         gravityY = 0.001;
         engine = Matter.Engine.create();
 
-        collision = new CollisionManager();
-
         constructor(game) {
             this.game = game;
+            this.collision = new CollisionManager(this);
         }
 
         rectangle(x, y, width, height) {
@@ -728,10 +758,10 @@ var Game = (function() {
         remove(matterSprite) {
             matterSprite.isDead = true;
             Matter.Composite.remove(this.engine.world, matterSprite.body);
+            matterSprite.trigger("remove", this);
         }
 
         update(deltaTime) {
-            this.collision.update();
             Matter.Engine.update(this.engine, deltaTime);
         }
 
@@ -787,7 +817,7 @@ var Game = (function() {
         // The keys that were just released
         up = [];
 
-        constructor() {
+        constructor(game) {
             document.addEventListener("keydown", event => {
                 this.pressed[event.keyCode] = true;
                 this.down[event.keyCode] = true;
@@ -798,6 +828,11 @@ var Game = (function() {
                 this.pressed[event.keyCode] = false;
                 this.up[event.keyCode] = true;
             });
+            document.addEventListener("keydown", e => {
+                if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) {
+                    e.preventDefault();
+                }
+            }, false);
         }
 
         update() {
@@ -896,4 +931,4 @@ var Game = (function() {
 
 })();
 
-export default Game;
+export Game;
