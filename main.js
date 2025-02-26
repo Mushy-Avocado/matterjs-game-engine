@@ -2,6 +2,8 @@ import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.20.0/+esm'
 
 var Game = (function() {
     console.clear();
+    
+    const originalHTML = document.querySelector("html").outerHTML;
 
     // Clear junk animation frames (for refreshes on Khan Academy)
     for (let i = window.requestAnimationFrame(function() {}); i > 0; i--) {
@@ -98,6 +100,57 @@ var Game = (function() {
             return value * value;
         }
     }
+    
+    // Controls how the canvas fits within its parent element.
+    class CanvasFit {
+        
+        // Whether to center the canvas within its parent
+        center = true;
+        
+        // Whether to resize the canvas to fit its parent (disabling this disables centering)
+        resize = true;
+        
+        scale = 1;
+        
+        constructor(render) {
+            this.render = render;
+        }
+        
+        push() {
+            const render = this.render;
+            render.pushMatrix();
+            if (!this.resize) return;
+            const canvas = render.canvas;
+            const canvasParent = canvas.parentElement;
+            const parentBounds = canvasParent.getBoundingClientRect();
+            const canvasBounds = canvas.getBoundingClientRect();
+            const canvasAR = canvasBounds.width / canvasBounds.height;
+            const parentAR = parentBounds.width / parentBounds.height;
+            
+            if (canvasAR < parentAR) {
+                canvas.width = parentBounds.height * canvasAR;
+                canvas.height = parentBounds.height;
+                if (this.center) {
+                    canvas.style.marginLeft = (parentBounds.width - canvas.width) / 2 + "px";
+                    canvas.style.marginTop = "0px";
+                }
+            } else {
+                canvas.width = parentBounds.width;
+                canvas.height = parentBounds.width / canvasAR;
+                if (this.center) {
+                    canvas.style.marginLeft = "0px";
+                    canvas.style.marginTop = (parentBounds.height - canvas.height) / 2 + "px";
+                }
+            }
+            this.scale = canvas.width / render.width;
+            render.scale(this.scale, this.scale);
+        }
+        
+        pop() {
+            this.render.popMatrix();
+        }
+        
+    }
 
     // Mimics P5.js but with better performance
     class Renderer {
@@ -114,11 +167,14 @@ var Game = (function() {
             alignY: "top",
         };
 
-        constructor(game) {
+        constructor(game, canvas) {
             this.game = game;
-            this.canvas = this.game._canvas;
+            this.canvas = canvas;
             this.ctx = this.canvas.getContext("2d");
             this.path = null;
+            this.width = this.canvas.width;
+            this.height = this.canvas.height;
+            this.fit = new CanvasFit(this);
         }
 
         background(r, g, b) {
@@ -326,14 +382,6 @@ var Game = (function() {
             this.ctx.rotate(this.game.math.radians(angle));
         }
 
-        get width() {
-            return this.canvas.width;
-        }
-
-        get height() {
-            return this.canvas.height;
-        }
-
         // Gets a portion of the canvas
         get(x, y, w = 1, h = 1) {
             return this.ctx.getImageData(x, y, w, h);
@@ -345,6 +393,7 @@ var Game = (function() {
         }
     }
     
+    // Invokes given callbacks when certain events are triggered. Allows for passing arguments to callbacks 
     class EventSystem {
         listeners = {};
 
@@ -788,9 +837,11 @@ var Game = (function() {
                 this.deltaTime = Math.min(performance.now() - this.lastFrame, 1000 / 10 /* minimum is 10 fps */ );
                 this.lastFrame = performance.now();
                 this.game.physics.update(this.deltaTime);
+                this.game.render.fit.push();
                 if (callback) {
                     callback();
                 }
+                this.game.render.fit.pop();
                 this.game.input.update();
                 this.draw(callback);
             });
@@ -819,25 +870,32 @@ var Game = (function() {
 
         constructor(game) {
             document.addEventListener("keydown", event => {
-                this.pressed[event.keyCode] = true;
-                this.down[event.keyCode] = true;
-            }, {
-                repeat: false,
+                if (document.activeElement !== game.render.canvas) {
+                    return;                    
+                }
+                if (event.repeat) {
+                    return;
+                }
+                this.pressed[event.code] = true;
+                this.down[event.code] = true;
             });
             document.addEventListener("keyup", event => {
-                this.pressed[event.keyCode] = false;
-                this.up[event.keyCode] = true;
+                this.pressed[event.code] = false;
+                this.up[event.code] = true;
             });
             document.addEventListener("keydown", e => {
-                if(["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].indexOf(e.code) > -1) {
+                if (document.activeElement !== game.render.canvas) {
+                    return;                    
+                }
+                if(["ArrowUp","ArrowDown"].indexOf(e.code) > -1) {
                     e.preventDefault();
                 }
             }, false);
         }
 
         update() {
-            this.down.length = 0;
-            this.up.length = 0;
+            this.down = [];
+            this.up = [];
         }
     }
 
@@ -851,20 +909,27 @@ var Game = (function() {
         left = false;
         // Returns true the frame the left mouse button is released
         leftUp = false;
+        // Returns true the frame the left mouse button is pressed
+        leftDown = false;
         // Returns true every frame the right mouse button is pressed
         right = false;
         // Returns true the frame the right mouse button is released
         rightUp = false;
+        // Returns true the frame the right mouse button is pressed
+        rightDown = false;
 
         // Whether to enable the right click menu
         contextMenu = false;
 
         constructor(game) {
+            this.game = game;
             game.render.canvas.addEventListener("mousedown", event => {
                 if (event.button === 0) {
                     this.left = true;
+                    this.leftDown = true;
                 } else if (event.button === 2) {
                     this.right = true;
+                    this.rightDown = true;
                 }
             });
 
@@ -883,14 +948,16 @@ var Game = (function() {
                 }
             });
             game.render.canvas.addEventListener("mousemove", event => {
-                this.x = event.offsetX;
-                this.y = event.offsetY;
+                this.x = event.offsetX / this.game.render.fit.scale;
+                this.y = event.offsetY / this.game.render.fit.scale;
             });
         }
 
         update() {
             this.leftUp = false;
             this.rightUp = false;
+            this.leftDown = false;
+            this.rightDown = false;
         }
     }
 
@@ -907,23 +974,169 @@ var Game = (function() {
         }
     }
 
+    // Manages the defining and execution of commands.
+    class CommandLine {
+        constructor(console) {
+            this.console = console;
+            this.commands = {};
+        }
+    
+        // Adds a command to the command line. Can have arguments
+        add(name, callback) {
+            this.commands[name] = callback;
+        }
+        
+        // Clears all commands from the command line
+        clear() {
+            this.commands = {};
+        }
+    
+        // Executes a string as a command.
+        exec(string) {
+            const parts = string.split(" ");
+            const commandName = parts[0];
+            const argStrings = parts.slice(1);
+            let args = [];
+            
+            try {
+                args = argStrings.map(arg => JSON.parse(arg));
+            } catch (e) {
+                this.console.log("Error in argument: " + e);
+                return;
+            }
+    
+            if (this.commands[commandName]) {
+                try {
+                    this.commands[commandName].apply(null, args);
+                } catch (e) {
+                    this.console.log("Error in command: " + e);
+                }
+            } else {
+                this.console.log(`Unknown command: ${commandName}`);
+            }
+        }
+    }
+    
+    // Manages logging to the console and HTML styling
+    class Console {
+        constructor(game) {
+            this.isOpen = false;
+            this.game = game;
+            this.commands = new CommandLine(this);
+            this.createHTML();
+            this.log("Welcome to the developer console. Press / to close.");
+        }
+    
+        createHTML() {
+            this.container = document.createElement("div");
+            this.container.style.position = "absolute";
+            this.container.style.top = "0px";
+            this.container.style.left = "0px";
+            this.container.style.right = "0px";
+            this.container.style.bottom = "0px";
+            this.container.style.overflowY = "auto";
+            this.container.style.border = "1px solid black";
+            this.container.style.padding = "10px";
+            this.container.style.backgroundColor = "rgba(0, 0, 0, 0.7)";
+            this.container.style.color = "#0f0";
+            this.container.style.fontFamily = "monospace";
+            this.container.style.paddingBottom = "100px";
+            document.body.appendChild(this.container);
+    
+            this.form = document.createElement("form");
+            this.input = document.createElement("input");
+            
+            this.input.style.position = "absolute";
+            this.input.style.height = "50px";
+            this.input.style.left = "0px";
+            this.input.style.right = "0px";
+            this.input.style.bottom = "0px";
+            this.input.style.color = "#000";
+            this.input.style.backgroundColor = "#0f0";
+            this.input.style.fontFamily = "monospace";
+            this.input.type = "text";
+            this.input.style.marginTop = "10px";
+            this.form.appendChild(this.input);
+            document.body.appendChild(this.form);
+    
+            this.form.addEventListener("submit", (e) => {
+                e.preventDefault();
+                const command = this.input.value;
+                this.input.value = "";
+                this.log(`> ${command}`);
+                this.commands.exec(command);
+            });
+    
+            document.addEventListener("commandOutput", (e) => {
+                const message = document.createElement("div");
+                message.textContent = e.detail;
+                this.container.appendChild(message);
+                this.container.scrollTop = this.container.scrollHeight;
+            });
+            
+            document.addEventListener("keydown", e => {
+                if (e.code === "Slash" && !e.repeat) {
+                    if (this.isOpen) {
+                        this.close();
+                    } else {
+                        this.open();
+                    }
+                } 
+            });
+            
+            this.form.style.display = "none";
+            this.container.style.display = "none";
+        }
+    
+        open() {
+            this.isOpen = true;
+            this.container.style.display = "block";
+            this.form.style.display = "block";
+            this.input.focus();
+            setTimeout(() => {
+                this.input.value = "";
+            }, 1);
+        }
+    
+        close() {
+            this.isOpen = false;
+            this.container.style.display = "none";
+            this.form.style.display = "none";
+            this.input.blur();
+            this.game.render.canvas.focus();
+        }
+        
+        log(message) {
+            const event = new CustomEvent("commandOutput", { detail: message });
+            document.dispatchEvent(event);
+        }
+    }
+
     // A composite class that contains all the components of a game
     class Game {
 
         static MatterSprite = MatterSprite;
 
         constructor(canvas = document.createElement("canvas")) {
-            this._canvas = canvas;
+            canvas.tabIndex = 0;
 
             this.math = new Mathf(this);
-            this.render = new Renderer(this);
+            this.render = new Renderer(this, canvas);
             this.physics = new Physics(this);
             this.input = new Input(this);
             this.loop = new Loop(this);
+            this.console = new Console(this);
         }
 
         group(items) {
             return new Group(items);
+        }
+        
+        fullscreen() {
+            const w = window.open();
+    		w.document.open();
+    		w.document.write(`<!DOCTYPE html>${originalHTML}`);
+    		w.document.close();
         }
     }
 
