@@ -1,3 +1,4 @@
+
 import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.20.0/+esm'
 
 var Mushy = (function() {
@@ -256,9 +257,8 @@ var Mushy = (function() {
             const canvasParent = canvas.parentElement;
             const parentBounds = canvasParent.getBoundingClientRect();
             const canvasBounds = canvas.getBoundingClientRect();
-            const canvasAR = canvasBounds.width / canvasBounds.height;
+            const canvasAR = render.width / render.height;
             const parentAR = parentBounds.width / parentBounds.height;
-            
             if (canvasAR < parentAR) {
                 canvas.width = parentBounds.height * canvasAR;
                 canvas.height = parentBounds.height;
@@ -274,7 +274,7 @@ var Mushy = (function() {
                     canvas.style.marginTop = (parentBounds.height - canvas.height) / 2 + "px";
                 }
             }
-            this.scale = canvas.width / render.width;
+            this.scale = Math.min(canvas.width / render.width, canvas.height / render.height);
             render.scale(this.scale, this.scale);
         }
         
@@ -302,7 +302,7 @@ var Mushy = (function() {
          * @type {Canvas}
         **/
         canvas = null;
-        
+                
         /**
          * @private
         **/
@@ -319,14 +319,51 @@ var Mushy = (function() {
         fit = null;
 
         /**
+         * The width of the renderer.
+         * @type {number}
+        **/
+        get width() {
+            return this.canvas.dataset.actualWidth;
+        }
+        
+        /**
+         * The height of the renderer.
+         * @type {number}
+        **/
+        get height() {
+            return this.canvas.dataset.actualHeight;
+        }
+
+        /**
          * @private
         **/
         constructor(scene, canvas) {
             this.scene = scene;
             this.canvas = canvas;
+            if (!this.canvas.dataset.actualWidth) {
+                this.canvas.dataset.actualWidth = 600;
+                this.canvas.width = 600;
+            }
+            if (!this.canvas.dataset.actualHeight) {
+                this.canvas.dataset.actualHeight = 600;
+                this.canvas.height = 600;
+            }
             this.fit = new CanvasFit(this);
         }
-
+        
+        /**
+         * Resizes the canvas. Will not reflect actual size if renderer.fit.resize is enabled.
+         * 
+         * @param {number} width
+         * @param {number} height
+        **/
+        size(width, height) {
+            this.canvas.width = width;
+            this.canvas.height = height;
+            this.canvas.dataset.actualWidth = width;
+            this.canvas.dataset.actualHeight = height;
+        }
+        
         /**
          * Fills the canvas with a solid RGB value. Optionally 1 argument can be supplied for all 3 rgb values.
          * @param {number} r
@@ -739,8 +776,6 @@ var Mushy = (function() {
         load() {
             this.ctx = this.canvas.getContext("2d");
             this.path = null;
-            this.width = this.canvas.width;
-            this.height = this.canvas.height;
             this.textSettings = {
                 size: 12,
                 style: "normal",
