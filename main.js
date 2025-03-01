@@ -198,6 +198,13 @@ var Mushy = (function() {
         static sq(value) {
             return value * value;
         }
+        
+        /**
+         * Returns a random number between the min range (inclusive) and max range (exclusive).
+        **/
+        static random(min, max) {
+            return (Math.random() * (max - min)) + min;
+        }
     }
     
     /**
@@ -382,12 +389,17 @@ var Mushy = (function() {
          * @param {number} r
          * @param {number} g
          * @param {number} b
+         * @param {number} a
         **/
-        fill(r, g, b) {
+        fill(r, g, b, a = 255) {
             if (arguments.length === 1) {
                 g = b = r;
             }
-            this.ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+            if (arguments.length === 2) {
+                a = g;
+                g = b = r;
+            }
+            this.ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${a / 255})`;
         }
 
         /**
@@ -395,12 +407,17 @@ var Mushy = (function() {
          * @param {number} r
          * @param {number} g
          * @param {number} b
+         * @param {number} a
         **/
-        stroke(r, g, b) {
+        stroke(r, g, b, a) {
             if (arguments.length === 1) {
                 g = b = r;
             }
-            this.ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+            if (arguments.length === 2) {
+                a = g;
+                g = b = r;
+            }
+            this.ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${a / 255})`;
         }
 
         /**
@@ -752,7 +769,19 @@ var Mushy = (function() {
          * @returns {ImageData} The data of the image captured.
         **/
         get(x, y, w = 1, h = 1) {
-            return this.ctx.getImageData(x, y, w, h);
+            // Create a new canvas to store the extracted pixels
+            const tempCanvas = document.createElement("canvas");
+            tempCanvas.width = w;
+            tempCanvas.height = h;
+            const tempCtx = tempCanvas.getContext("2d");
+            
+            // Get pixel data from the source canvas
+            const imageData = this.ctx.getImageData(x, y, w, h);
+            
+            // Put the extracted pixels onto the new canvas
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            return tempCanvas;
         }
 
         /**
@@ -859,18 +888,22 @@ var Mushy = (function() {
 
         /**
          * {number} The x position of the body.
-         * @readonly
         **/
         get x() {
             return this.body.position.x;
         }
+        set x(value) {
+            this.body.position.x = value;
+        }
         
         /**
          * {number} The y position of the body.
-         * @readonly
         **/
         get y() {
             return this.body.position.y;
+        }
+        set y(value) {
+            this.body.position.y = value;
         }
 
         /**
@@ -1190,11 +1223,8 @@ var Mushy = (function() {
          * @private
         **/
         constructor(physics) {
-            Matter.Events.on(physics.engine, "collisionActive", pairsList => {
-                pairsList.pairs.forEach(pair => {
-                    this.processCollision(pair.collision);
-                });
-            });
+            this.physics = physics;
+            this.detector = Matter.Detector.create();
         }
         
         /**
@@ -1288,6 +1318,22 @@ var Mushy = (function() {
             if (callback) {
                 callback(b, a, Matter.Collision.create(b.body, a.body));
             }
+        }
+        
+        /**
+         * @private
+        **/
+        update() {
+            this.physics.sprites.each(a => {
+                this.physics.sprites.each(b => {
+                    if (a !== b && Matter.Bounds.overlaps(a.bounds, b.bounds)) {
+                        const collision = Matter.Collision.collides(a.body, b.body);
+                        if (collision) {
+                            this.processCollision(collision);   
+                        }
+                    } 
+                });
+            });
         }
         
     }
@@ -1399,7 +1445,7 @@ var Mushy = (function() {
         /**
          * @private
         **/
-        sprites = [];
+        sprites = new Group();
         
         /**
          * @private
@@ -1418,11 +1464,16 @@ var Mushy = (function() {
         engine = Matter.Engine.create();
 
         /**
+         * A collision manager.
+         * @type {CollisionManager}
+        **/
+        collision = new CollisionManager(this);                 
+
+        /**
          * @private
         **/
         constructor(scene) {
             this.scene = scene;
-            this.collision = new CollisionManager(this);
             this.engine.world.gravity.y = 0;
         }
 
@@ -1498,6 +1549,7 @@ var Mushy = (function() {
          * @param {MatterSprite} matterSprite
         **/
         add(matterSprite) {
+            this.sprites.add(matterSprite);
             matterSprite.isDead = false;
             Matter.Composite.add(this.engine.world, matterSprite.body);
         }
@@ -1508,6 +1560,7 @@ var Mushy = (function() {
          * @param {MatterSprite} matterSprite
         **/
         remove(matterSprite) {
+            this.sprites.remove(matterSprite);
             matterSprite.isDead = true;
             Matter.Composite.remove(this.engine.world, matterSprite.body);
             matterSprite.trigger("remove", this);
@@ -1528,6 +1581,7 @@ var Mushy = (function() {
          * @private
         **/
         update(deltaTime) {
+            this.collision.listener.update();
             Matter.Engine.update(this.engine, deltaTime);
         }
         
@@ -1542,6 +1596,8 @@ var Mushy = (function() {
          * @private
         **/
         unload() {
+            this.collision = new CollisionManager(this);
+            this.sprites.length = 0;
             Matter.Engine.clear(this.engine);
         }
 
