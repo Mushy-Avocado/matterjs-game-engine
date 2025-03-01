@@ -1,4 +1,3 @@
-
 import Matter from 'https://cdn.jsdelivr.net/npm/matter-js@0.20.0/+esm'
 
 var Mushy = (function() {
@@ -839,12 +838,7 @@ var Mushy = (function() {
         /**
          * @private
         **/
-        isDead = false;
-        
-        /**
-         * @private
-        **/
-        isGravity = true;
+        isDead = false;e
         
         /**
          * {object} A Matter.js physics body.
@@ -1127,15 +1121,6 @@ var Mushy = (function() {
         **/
         setBounce(value) {
             this.body.restitution = value;
-        }
-
-        /**
-         * Sets whether the body has gravity or not.
-         * 
-         * @param {bool} value
-        **/
-        setGravity(value) {
-            this.isGravity = value;
         }
 
     }
@@ -1427,7 +1412,8 @@ var Mushy = (function() {
         gravityY = 0.001;
         
         /**
-         * @private
+         * A reference to the Matter physics engine.
+         * @type {object}
         **/ 
         engine = Matter.Engine.create();
 
@@ -1437,6 +1423,7 @@ var Mushy = (function() {
         constructor(scene) {
             this.scene = scene;
             this.collision = new CollisionManager(this);
+            this.engine.world.gravity.y = 0;
         }
 
         /**
