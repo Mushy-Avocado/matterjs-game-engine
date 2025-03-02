@@ -1198,6 +1198,13 @@ var Mushy = (function() {
                 this.items.splice(index, 1);
             }
         }
+        
+        /**
+         * Clears all items from the group.
+        **/
+        clear() {
+            this.items.length = 0;
+        }
 
         /**
          * Invokes the given callback on each item in the group, passing a MatterSprite to it.
@@ -1259,8 +1266,8 @@ var Mushy = (function() {
                         });
                     });
                     b.on("add", item => {
-                        b.each(b => {
-                            this.internalAddSingle(item, b, callback);
+                        a.each(a => {
+                            this.internalAddSingle(a, item, callback);
                         });
                     });
                 } else {
@@ -1323,15 +1330,36 @@ var Mushy = (function() {
         /**
          * @private
         **/
+        updatePair(a, b) {
+            if (a instanceof Group) {
+                a.each(a => {
+                    if (b instanceof Group) {
+                        b.each(b => {
+                            this.updatePair(a, b); 
+                        });
+                    } else {
+                        this.updatePair(a, b); 
+                    }
+                });
+            } else if (b instanceof Group) {
+                this.updatePair(b, a);
+            } else {
+                if (a !== b && Matter.Bounds.overlaps(a.bounds, b.bounds)) {
+                    const collision = Matter.Collision.collides(a.body, b.body);
+                    if (collision) {
+                        this.processCollision(collision);   
+                    }
+                }
+            }
+        }
+        
+        /**
+         * @private
+        **/
         update() {
-            this.physics.sprites.each(a => {
-                this.physics.sprites.each(b => {
-                    if (a !== b && Matter.Bounds.overlaps(a.bounds, b.bounds)) {
-                        const collision = Matter.Collision.collides(a.body, b.body);
-                        if (collision) {
-                            this.processCollision(collision);   
-                        }
-                    } 
+            this.listenPairs.forEach((pairs, a) => {
+                pairs.forEach((callback, b) => {
+                    this.updatePair(a, b);
                 });
             });
         }
@@ -1407,8 +1435,8 @@ var Mushy = (function() {
                         });
                     });
                     b.on("add", item => {
-                        b.each(b => {
-                            this.internalAddSingle(item, b);
+                        a.each(a => {
+                            this.internalAddSingle(a, item);
                         });
                     });
                 } else {
@@ -1597,7 +1625,7 @@ var Mushy = (function() {
         **/
         unload() {
             this.collision = new CollisionManager(this);
-            this.sprites.length = 0;
+            this.sprites.clear();
             Matter.Engine.clear(this.engine);
         }
 
